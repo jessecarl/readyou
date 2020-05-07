@@ -2,10 +2,12 @@ package main
 
 import (
 	"flag"
+	"io"
 	"log"
 	"os"
 	"text/template"
 
+	"github.com/gohugoio/hugo/parser/metadecoders"
 	"github.com/gohugoio/hugo/parser/pageparser"
 )
 
@@ -38,7 +40,7 @@ func main() {
 	}
 
 	// parse input for data and raw template
-	content, err := pageparser.ParseFrontMatterAndContent(in)
+	content, err := parseFrontMatterAndContent(in)
 	if err != nil {
 		log.Panic(err)
 	}
@@ -53,4 +55,37 @@ func main() {
 	if err != nil {
 		log.Panic(err)
 	}
+}
+
+func parseFrontMatterAndContent(r io.Reader) (pageparser.ContentFrontMatter, error) {
+	var cf pageparser.ContentFrontMatter
+
+	psr, err := pageparser.Parse(r, pageparser.Config{})
+	if err != nil {
+		return cf, err
+	}
+
+	var frontMatterSource []byte
+
+	iter := psr.Iterator()
+
+	walkFn := func(item pageparser.Item) bool {
+		if frontMatterSource != nil {
+			// The rest is content.
+			cf.Content = psr.Input()[item.Pos:]
+			// Done
+			return false
+		} else if item.IsFrontMatter() {
+			cf.FrontMatterFormat = pageparser.FormatFromFrontMatterType(item.Type)
+			frontMatterSource = item.Val
+		} else if item.IsDone() {
+			cf.Content = psr.Input()[:]
+		}
+		return true
+	}
+
+	iter.PeekWalk(walkFn)
+
+	cf.FrontMatter, err = metadecoders.Default.UnmarshalToMap(frontMatterSource, cf.FrontMatterFormat)
+	return cf, err
 }
